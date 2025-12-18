@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 import argparse
 import http.client
+import json
 import re
 import socket
 import ssl
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-ADMIN_PORTS = (82, 83, 443, 8080, 8443, 9443)
-QUARANTINE_PORTS = (6025, 82, 83, 8443, 9443)
+ADMIN_PORTS = (443, 8080)  # Common admin-only ports
+QUARANTINE_PORTS = (6025,)  # Quarantine-specific port
+SHARED_PORTS = (82, 83, 8443, 9443)  # Can be either admin or quarantine
+ALL_PORTS = tuple(sorted(set(ADMIN_PORTS + QUARANTINE_PORTS + SHARED_PORTS)))
 SPAM_PATHS = ("/quarantine", "/spamquarantine", "/spam", "/sma-login", "/login")
 BODY_KEYWORDS = (
     "cisco secure email",
@@ -22,7 +25,6 @@ BODY_KEYWORDS = (
 )
 VERSION_PATTERNS = (
     r"asyncos[^\d]*(\d+\.\d+\.\d+)",
-    r"version[:\s]+(\d+\.\d+\.\d+)",
 )
 
 
@@ -185,125 +187,153 @@ def probe_quarantine_paths(
     return hits
 
 
-def grab_raw_banner(host: str, port: int, timeout: float = 3.0) -> Dict[str, Optional[str]]:
-    """Grab a simple banner over a raw socket."""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            sock.connect((host, port))
-            request = f"HEAD / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode()
-            sock.sendall(request)
-            data = sock.recv(1024)
-            return {"banner": data.decode(errors="ignore").strip(), "error": None}
-    except OSError as exc:
-        return {"banner": None, "error": str(exc)}
-
-
-def assess_risk(target: str, timeout: float = 3.0, verbose: bool = False) -> bool:
+def assess_risk(target: str, timeout: float = 3.0, verbose: bool = False, json_output: bool = False) -> Dict[str, Any]:
     host, resolved_ip = resolve_target(target)
-    print(
-        f"Scanning {host} (resolved to {resolved_ip}) for Cisco Secure Email/SMA exposure (CVE-2025-20393)..."
-    )
+    
+    result: Dict[str, Any] = {
+        "target": host,
+        "resolved_ip": resolved_ip,
+        "admin_ports_open": [],
+        "quarantine_ports_open": [],
+        "fingerprints": [],
+        "quarantine_paths": [],
+        "exposure_detected": False,
+        "exposure_reason": None,
+        "cisco_indicators_found": False,
+    }
+    
+    if not json_output:
+        print(
+            f"Scanning {host} (resolved to {resolved_ip}) for Cisco Secure Email/SMA exposure (CVE-2025-20393)..."
+        )
 
-    vprint(verbose, f"- Checking admin ports: {', '.join(str(p) for p in ADMIN_PORTS)}")
-    admin_ports = scan_ports(resolved_ip, ADMIN_PORTS, timeout=timeout, verbose=verbose)
-    vprint(verbose, f"- Checking quarantine ports: {', '.join(str(p) for p in QUARANTINE_PORTS)}")
-    quarantine_ports = scan_ports(resolved_ip, QUARANTINE_PORTS, timeout=timeout, verbose=verbose)
+    vprint(verbose and not json_output, f"- Checking ports: {', '.join(str(p) for p in ALL_PORTS)}")
+    open_ports = scan_ports(resolved_ip, ALL_PORTS, timeout=timeout, verbose=verbose and not json_output)
+    
+    # Classify open ports
+    admin_ports = [p for p in open_ports if p in ADMIN_PORTS or p in SHARED_PORTS]
+    quarantine_ports = [p for p in open_ports if p in QUARANTINE_PORTS or p in SHARED_PORTS]
+    
+    result["admin_ports_open"] = admin_ports
+    result["quarantine_ports_open"] = quarantine_ports
 
-    print("\nAdmin/Management ports open:", admin_ports or "None")
-    print("Spam Quarantine ports open:", quarantine_ports or "None")
+    if not json_output:
+        print("\nOpen ports:", open_ports or "None")
 
-    open_ports = sorted(set(admin_ports + quarantine_ports))
     quarantine_paths_found = False
     cisco_indicators_found = False
     if not open_ports:
-        vprint(verbose, "No open admin or quarantine ports found; skipping HTTP/S banner and quarantine path probes.")
+        vprint(verbose and not json_output, "No relevant ports open; skipping HTTP/S banner probes.")
     if open_ports:
-        print("\nHTTP/S fingerprints (best effort):")
+        if not json_output:
+            print("\nHTTP/S fingerprints (best effort):")
         for port in open_ports:
-            vprint(verbose, f"  > Probing HTTP/HTTPS on port {port}")
+            vprint(verbose and not json_output, f"  > Probing HTTP/HTTPS on port {port}")
             banner = probe_http_banner(resolved_ip, port, timeout=timeout)
+            fingerprint: Dict[str, Any] = {"port": port}
             if banner["error"]:
-                print(f"- {port}/tcp: no HTTP banner ({banner['error']})")
-                raw_banner = grab_raw_banner(resolved_ip, port, timeout=timeout)
-                if raw_banner["banner"]:
-                    first_line = raw_banner["banner"].splitlines()[0] if raw_banner["banner"] else ""
-                    print(f"  -> Raw banner: {first_line}")
-                elif verbose:
-                    print(f"  -> Raw banner grab failed: {raw_banner['error']}")
+                fingerprint["error"] = banner["error"]
+                if not json_output:
+                    print(f"- {port}/tcp: no HTTP banner ({banner['error']})")
+                result["fingerprints"].append(fingerprint)
                 continue
-            summary = f"- {port}/{banner['scheme']}: {banner['status']}"
-            if banner["server"]:
-                summary += f" | Server: {banner['server']}"
-            if banner["location"]:
-                summary += f" | Location: {banner['location']}"
-            if banner["www_authenticate"]:
-                summary += f" | Auth: {banner['www_authenticate']}"
+            fingerprint["scheme"] = banner["scheme"]
+            fingerprint["status"] = banner["status"]
+            fingerprint["server"] = banner["server"]
+            fingerprint["location"] = banner["location"]
+            fingerprint["www_authenticate"] = banner["www_authenticate"]
+            fingerprint["indicators"] = banner["indicators"]
+            fingerprint["version"] = banner["version"]
+            if not json_output:
+                summary = f"- {port}/{banner['scheme']}: {banner['status']}"
+                if banner["server"]:
+                    summary += f" | Server: {banner['server']}"
+                if banner["location"]:
+                    summary += f" | Location: {banner['location']}"
+                if banner["www_authenticate"]:
+                    summary += f" | Auth: {banner['www_authenticate']}"
+                if banner["indicators"]:
+                    summary += f" | Indicators: {banner['indicators']}"
+                if banner["version"]:
+                    summary += f" | Version: {banner['version']}"
+                print(summary)
             if banner["indicators"]:
-                summary += f" | Indicators: {banner['indicators']}"
                 cisco_indicators_found = True
             if banner["version"]:
-                summary += f" | Version: {banner['version']}"
                 cisco_indicators_found = True
-            print(summary)
-            raw_banner = grab_raw_banner(resolved_ip, port, timeout=timeout)
-            if raw_banner["banner"]:
-                first_line = raw_banner["banner"].splitlines()[0] if raw_banner["banner"] else ""
-                print(f"  -> Raw banner: {first_line}")
-            elif verbose:
-                print(f"  -> Raw banner grab failed: {raw_banner['error']}")
-            hits = probe_quarantine_paths(resolved_ip, port, banner["scheme"], timeout=timeout, verbose=verbose)
+            result["fingerprints"].append(fingerprint)
+            hits = probe_quarantine_paths(resolved_ip, port, banner["scheme"], timeout=timeout, verbose=verbose and not json_output)
             for hit in hits:
                 quarantine_paths_found = True
-                detail = f"  -> {port}/{hit['scheme']}{hit['path']}: {hit['status']}"
-                if hit["location"]:
-                    detail += f" | Location: {hit['location']}"
-                if hit["www_authenticate"]:
-                    detail += f" | Auth: {hit['www_authenticate']}"
-                print(detail)
-            if verbose and not hits:
+                path_info = {
+                    "port": port,
+                    "scheme": hit["scheme"],
+                    "path": hit["path"],
+                    "status": hit["status"],
+                    "location": hit.get("location"),
+                    "www_authenticate": hit.get("www_authenticate"),
+                }
+                result["quarantine_paths"].append(path_info)
+                if not json_output:
+                    detail = f"  -> {port}/{hit['scheme']}{hit['path']}: {hit['status']}"
+                    if hit["location"]:
+                        detail += f" | Location: {hit['location']}"
+                    if hit["www_authenticate"]:
+                        detail += f" | Auth: {hit['www_authenticate']}"
+                    print(detail)
+            if verbose and not json_output and not hits:
                 print("  -> Quarantine path probes: no indicative responses")
 
     # Only report exposure if we found Cisco-specific indicators
     is_exposed = cisco_indicators_found or quarantine_paths_found
+    result["cisco_indicators_found"] = cisco_indicators_found
     
     if is_exposed:
-        print("\n" + "=" * 60)
-        print("POTENTIAL CISCO SECURE EMAIL/SMA EXPOSURE DETECTED")
-        print("=" * 60)
-        if cisco_indicators_found:
-            print("- Cisco-specific indicators found in HTTP responses")
-        if quarantine_paths_found:
-            print("- Quarantine login paths responded with Cisco keywords")
-        if 6025 in quarantine_ports:
-            print("- Port 6025 open (spam quarantine) - high risk indicator")
-        print("\nRecommended actions:")
-        print("1) Block internet access to these ports")
-        print("2) Disable Spam Quarantine or restrict access")
-        print(
-            "3) Review Cisco advisory: https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-sma-attack-N9bf4"
-        )
-        return True
+        result["exposure_detected"] = True
+        result["exposure_reason"] = "cisco_indicators" if cisco_indicators_found else "quarantine_paths"
+        if not json_output:
+            print("\n" + "=" * 60)
+            print("POTENTIAL CISCO SECURE EMAIL/SMA EXPOSURE DETECTED")
+            print("=" * 60)
+            if cisco_indicators_found:
+                print("- Cisco-specific indicators found in HTTP responses")
+            if quarantine_paths_found:
+                print("- Quarantine login paths responded with Cisco keywords")
+            if 6025 in quarantine_ports:
+                print("- Port 6025 open (spam quarantine) - high risk indicator")
+            print("\nRecommended actions:")
+            print("1) Block internet access to these ports")
+            print("2) Disable Spam Quarantine or restrict access")
+            print(
+                "3) Review Cisco advisory: https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-sma-attack-N9bf4"
+            )
+        return result
     
     # Special case: port 6025 is almost always Cisco spam quarantine
     if 6025 in quarantine_ports:
-        print("\n" + "=" * 60)
-        print("WARNING: PORT 6025 OPEN")
-        print("=" * 60)
-        print("Port 6025 is commonly used for Cisco Spam Quarantine.")
-        print("Even without confirmed indicators, this warrants investigation.")
-        print("\nRecommended: Verify if this is a Cisco appliance and restrict access.")
-        return True
+        result["exposure_detected"] = True
+        result["exposure_reason"] = "port_6025_open"
+        if not json_output:
+            print("\n" + "=" * 60)
+            print("WARNING: PORT 6025 OPEN")
+            print("=" * 60)
+            print("Port 6025 is commonly used for Cisco Spam Quarantine.")
+            print("Even without confirmed indicators, this warrants investigation.")
+            print("\nRecommended: Verify if this is a Cisco appliance and restrict access.")
+        return result
 
-    print("\n" + "=" * 60)
-    print("RESULT: NO EXPOSURE DETECTED")
-    print("=" * 60)
-    print(f"Target: {host} ({resolved_ip})")
-    print("- No admin/management ports open")
-    print("- No spam quarantine ports open")
-    print("\nThis host does not appear to expose Cisco Secure Email/SMA")
-    print("management interfaces to the scanned network.")
-    return False
+    if not json_output:
+        print("\n" + "=" * 60)
+        print("RESULT: NO EXPOSURE DETECTED")
+        print("=" * 60)
+        print(f"Target: {host} ({resolved_ip})")
+        if not open_ports:
+            print("- No relevant ports open")
+        else:
+            print(f"- Open ports ({', '.join(str(p) for p in open_ports)}) show no Cisco indicators")
+        print("\nThis host does not appear to expose Cisco Secure Email/SMA")
+        print("management interfaces to the scanned network.")
+    return result
 
 
 def main(argv: List[str]) -> int:
@@ -313,12 +343,18 @@ def main(argv: List[str]) -> int:
     parser.add_argument("target", help="Target host or domain")
     parser.add_argument("-t", "--timeout", type=float, default=3.0, help="Connection timeout in seconds (default: 3)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show all checks performed")
+    parser.add_argument("-j", "--json", action="store_true", dest="json_output", help="Output results as JSON to stdout")
 
     args = parser.parse_args(argv)
     try:
-        assess_risk(args.target, timeout=args.timeout, verbose=args.verbose)
+        result = assess_risk(args.target, timeout=args.timeout, verbose=args.verbose, json_output=args.json_output)
+        if args.json_output:
+            print(json.dumps(result, indent=2))
     except ValueError as exc:
-        print(exc)
+        if args.json_output:
+            print(json.dumps({"error": str(exc)}))
+        else:
+            print(exc)
         return 1
     return 0
 
