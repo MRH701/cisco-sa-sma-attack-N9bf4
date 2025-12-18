@@ -207,11 +207,9 @@ def assess_risk(target: str, timeout: float = 3.0, verbose: bool = False, json_o
     open_ports = scan_ports(resolved_ip, ALL_PORTS, timeout=timeout, verbose=verbose and not json_output)
     
     # Classify open ports
-    admin_ports = [p for p in open_ports if p in ADMIN_PORTS or p in SHARED_PORTS]
     quarantine_ports = [p for p in open_ports if p in QUARANTINE_PORTS or p in SHARED_PORTS]
     
-    result["admin_ports_open"] = admin_ports
-    result["quarantine_ports_open"] = quarantine_ports
+    result["open_ports"] = open_ports
 
     if not json_output:
         print("\nOpen ports:", open_ports or "None")
@@ -226,20 +224,10 @@ def assess_risk(target: str, timeout: float = 3.0, verbose: bool = False, json_o
         for port in open_ports:
             vprint(verbose and not json_output, f"  > Probing HTTP/HTTPS on port {port}")
             banner = probe_http_banner(resolved_ip, port, timeout=timeout)
-            fingerprint: Dict[str, Any] = {"port": port}
             if banner["error"]:
-                fingerprint["error"] = banner["error"]
                 if not json_output:
                     print(f"- {port}/tcp: no HTTP banner ({banner['error']})")
-                result["fingerprints"].append(fingerprint)
                 continue
-            fingerprint["scheme"] = banner["scheme"]
-            fingerprint["status"] = banner["status"]
-            fingerprint["server"] = banner["server"]
-            fingerprint["location"] = banner["location"]
-            fingerprint["www_authenticate"] = banner["www_authenticate"]
-            fingerprint["indicators"] = banner["indicators"]
-            fingerprint["version"] = banner["version"]
             if not json_output:
                 summary = f"- {port}/{banner['scheme']}: {banner['status']}"
                 if banner["server"]:
@@ -255,21 +243,17 @@ def assess_risk(target: str, timeout: float = 3.0, verbose: bool = False, json_o
                 print(summary)
             if banner["indicators"]:
                 cisco_indicators_found = True
+                for ind in banner["indicators"].split(", "):
+                    if ind and ind not in result["cisco_indicators"]:
+                        result["cisco_indicators"].append(ind)
             if banner["version"]:
                 cisco_indicators_found = True
-            result["fingerprints"].append(fingerprint)
+                version_str = f"asyncos {banner['version']}"
+                if version_str not in result["cisco_indicators"]:
+                    result["cisco_indicators"].append(version_str)
             hits = probe_quarantine_paths(resolved_ip, port, banner["scheme"], timeout=timeout, verbose=verbose and not json_output)
             for hit in hits:
                 quarantine_paths_found = True
-                path_info = {
-                    "port": port,
-                    "scheme": hit["scheme"],
-                    "path": hit["path"],
-                    "status": hit["status"],
-                    "location": hit.get("location"),
-                    "www_authenticate": hit.get("www_authenticate"),
-                }
-                result["quarantine_paths"].append(path_info)
                 if not json_output:
                     detail = f"  -> {port}/{hit['scheme']}{hit['path']}: {hit['status']}"
                     if hit["location"]:
@@ -282,11 +266,9 @@ def assess_risk(target: str, timeout: float = 3.0, verbose: bool = False, json_o
 
     # Only report exposure if we found Cisco-specific indicators
     is_exposed = cisco_indicators_found or quarantine_paths_found
-    result["cisco_indicators_found"] = cisco_indicators_found
     
     if is_exposed:
-        result["exposure_detected"] = True
-        result["exposure_reason"] = "cisco_indicators" if cisco_indicators_found else "quarantine_paths"
+        result["possibly_vulnerable"] = True
         if not json_output:
             print("\n" + "=" * 60)
             print("POTENTIAL CISCO SECURE EMAIL/SMA EXPOSURE DETECTED")
@@ -307,8 +289,7 @@ def assess_risk(target: str, timeout: float = 3.0, verbose: bool = False, json_o
     
     # Special case: port 6025 is almost always Cisco spam quarantine
     if 6025 in quarantine_ports:
-        result["exposure_detected"] = True
-        result["exposure_reason"] = "port_6025_open"
+        result["possibly_vulnerable"] = True
         if not json_output:
             print("\n" + "=" * 60)
             print("WARNING: PORT 6025 OPEN")
