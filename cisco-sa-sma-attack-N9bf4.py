@@ -193,13 +193,9 @@ def assess_risk(target: str, timeout: float = 3.0, verbose: bool = False, json_o
     result: Dict[str, Any] = {
         "target": host,
         "resolved_ip": resolved_ip,
-        "admin_ports_open": [],
-        "quarantine_ports_open": [],
-        "fingerprints": [],
-        "quarantine_paths": [],
-        "exposure_detected": False,
-        "exposure_reason": None,
-        "cisco_indicators_found": False,
+        "possibly_vulnerable": False,
+        "open_ports": [],
+        "cisco_indicators": [],
     }
     
     if not json_output:
